@@ -11,20 +11,21 @@ class ProductController extends Controller
     /**
      * Liste des produits
      */
-    public function index()
-    {
-        $products = Product::with([
-            'farm',
-            'category',
-            'images'
-        ])->latest()->paginate(10);
+   public function index()
+{
+    $products = Product::with([
+        'farm',
+        'category'
+    ])
+    ->latest()
+    ->paginate(10);
 
-        return response()->json([
-            'success' => true,
-            'message' => 'Liste des produits',
-            'data' => $products
-        ]);
-    }
+    return response()->json([
+        'success' => true,
+        'message' => 'Liste des produits',
+        'data' => $products
+    ]);
+}
 
     /**
      * Création d'un produit

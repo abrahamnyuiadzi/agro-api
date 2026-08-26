@@ -102,19 +102,18 @@ public function store(Request $request)
     /**
      * Afficher un produit
      */
-    public function show(Product $product)
-    {
-        $product->load([
-            'farm',
-            'category',
-            'images'
-        ]);
+public function show(Product $product)
+{
+    $product->load([
+        'category',
+        'farm.owner',
+    ]);
 
-        return response()->json([
-            'success' => true,
-            'data' => $product
-        ]);
-    }
+    return response()->json([
+        'success' => true,
+        'data' => $product,
+    ]);
+}
 
     /**
      * Modifier un produit

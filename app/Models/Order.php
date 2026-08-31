@@ -17,25 +17,16 @@ class Order extends Model
         'neighborhood',
         'note',
         'payment_method',
+        'payment_phone',
         'total',
         'status',
     ];
 
-    protected $casts = [
-        'total' => 'decimal:2',
-    ];
-
-    /**
-     * Acheteur connecté
-     */
     public function buyer()
     {
         return $this->belongsTo(User::class, 'buyer_id');
     }
 
-    /**
-     * Produits de la commande
-     */
     public function items()
     {
         return $this->hasMany(OrderItem::class);

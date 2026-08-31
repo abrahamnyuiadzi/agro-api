@@ -14,9 +14,9 @@ class OrderController extends Controller
     /**
      * Créer une commande
      *
-     * Cette route peut être utilisée :
-     * - par un utilisateur connecté
-     * - par un visiteur non connecté
+     * Cette route est publique :
+     * - un utilisateur connecté peut commander
+     * - un visiteur peut commander sans compte
      */
     public function store(Request $request)
     {
@@ -27,60 +27,71 @@ class OrderController extends Controller
         */
 
         $validated = $request->validate([
+
+            // Informations personnelles
             'first_name' => 'required|string|max:100',
-            'last_name' => 'required|string|max:100',
+            'last_name'  => 'required|string|max:100',
+            'phone'      => 'required|string|max:20',
+            'email'      => 'nullable|email|max:255',
 
-            'phone' => 'required|string|max:20',
+            // Adresse de livraison
+            'address'      => 'required|string|max:500',
+            'city'         => 'required|string|max:100',
+            'neighborhood' => 'nullable|string|max:255',
+            'note'         => 'nullable|string|max:1000',
 
-            'email' => 'nullable|email|max:255',
-
-            'address' => 'required|string|max:500',
-
-            'city' => 'required|string|max:100',
-
-            /*
-            |--------------------------------------------------------------------------
-            | Produits commandés
-            |--------------------------------------------------------------------------
-            */
-
+            // Produits
             'items' => 'required|array|min:1',
 
-            'items.*.product_id' => 'required|integer|exists:products,id',
+            'items.*.product_id' => [
+                'required',
+                'integer',
+                'exists:products,id',
+            ],
 
-            'items.*.quantity' => 'required|integer|min:1',
+            'items.*.quantity' => [
+                'required',
+                'integer',
+                'min:1',
+            ],
 
-            /*
-            |--------------------------------------------------------------------------
-            | Paiement
-            |--------------------------------------------------------------------------
-            */
+            // Paiement
+            'payment_method' => [
+                'required',
+                'in:flooz,tmoney',
+            ],
 
-            'payment_method' => 'required|in:flooz,tmoney',
-
-            'payment_phone' => 'required|string|max:20',
+            'payment_phone' => [
+                'required',
+                'string',
+                'max:20',
+            ],
         ]);
+
 
         /*
         |--------------------------------------------------------------------------
-        | 2. Vérifier si l'utilisateur est connecté
+        | 2. Récupérer l'utilisateur connecté
         |--------------------------------------------------------------------------
         |
-        | La route /orders est publique.
-        | Si un utilisateur est connecté, on récupère son ID.
-        | Sinon buyer_id sera NULL.
+        | La route étant publique, $request->user() peut être null.
         |
         */
 
         $buyerId = $request->user()?->id;
+
 
         /*
         |--------------------------------------------------------------------------
         | 3. Transaction
         |--------------------------------------------------------------------------
         |
-        | Toutes les opérations sont exécutées ensemble.
-        | Si une erreur survient, tout est annulé.
+        | Toute la création de la commande se fait dans une transaction.
+        |
+        | Si une erreur arrive :
+        | - la commande n'est pas créée
+        | - les order_items ne sont pas créés
+        | - le stock n'est pas modifié
         |
         */
 
@@ -91,13 +102,26 @@ class OrderController extends Controller
                 $buyerId
             ) {
 
-                $total = 0;
+                /*
+                |--------------------------------------------------------------------------
+                | Total de la commande
+                |--------------------------------------------------------------------------
+                */
 
-                $orderItems = [];
+                $total = 0;
 
                 /*
                 |--------------------------------------------------------------------------
-                | 4. Vérification des produits et calcul du total
+                | Tableau contenant les lignes de commande
+                |--------------------------------------------------------------------------
+                */
+
+                $orderItems = [];
+
+
+                /*
+                |--------------------------------------------------------------------------
+                | 4. Vérifier chaque produit
                 |--------------------------------------------------------------------------
                 */
 
@@ -105,40 +129,54 @@ class OrderController extends Controller
 
                     /*
                     |--------------------------------------------------------------------------
-                    | On verrouille le produit pendant la transaction
+                    | Récupérer le produit avec verrouillage
                     |--------------------------------------------------------------------------
                     |
-                    | Cela évite que deux personnes achètent simultanément
-                    | le dernier stock disponible.
+                    | lockForUpdate() empêche deux commandes simultanées
+                    | de modifier le même stock au même moment.
                     |
                     */
 
                     $product = Product::lockForUpdate()
                         ->find($item['product_id']);
 
+
                     /*
                     |--------------------------------------------------------------------------
-                    | Produit introuvable
+                    | Produit inexistant
                     |--------------------------------------------------------------------------
                     */
 
                     if (!$product) {
+
                         throw new \Exception(
                             "Le produit #{$item['product_id']} n'existe plus."
                         );
                     }
 
+
                     /*
                     |--------------------------------------------------------------------------
-                    | Vérifier que le produit est disponible
+                    | Vérifier si le produit est disponible
                     |--------------------------------------------------------------------------
                     */
 
                     if (!$product->is_available) {
+
                         throw new \Exception(
                             "Le produit \"{$product->name}\" n'est plus disponible."
                         );
                     }
+
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Quantité demandée
+                    |--------------------------------------------------------------------------
+                    */
+
+                    $quantity = (int) $item['quantity'];
+
 
                     /*
                     |--------------------------------------------------------------------------
@@ -146,30 +184,38 @@ class OrderController extends Controller
                     |--------------------------------------------------------------------------
                     */
 
-                    if ($product->quantity < $item['quantity']) {
+                    if ($product->quantity < $quantity) {
 
                         throw new \Exception(
-                            "Stock insuffisant pour le produit \"{$product->name}\". " .
-                            "Stock disponible : {$product->quantity}."
+                            "Stock insuffisant pour le produit \"{$product->name}\". "
+                            . "Stock disponible : {$product->quantity}."
                         );
                     }
 
+
                     /*
                     |--------------------------------------------------------------------------
-                    | Prix actuel du produit
+                    | Prix réel du produit
                     |--------------------------------------------------------------------------
                     |
                     | IMPORTANT :
-                    | On ne fait jamais confiance au prix envoyé par React.
-                    | Le prix vient directement de la base de données.
+                    | On ne récupère PAS le prix envoyé par React.
+                    |
+                    | Le prix utilisé vient directement de la base de données.
                     |
                     */
 
                     $unitPrice = (float) $product->price;
 
-                    $quantity = (int) $item['quantity'];
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Calcul du sous-total
+                    |--------------------------------------------------------------------------
+                    */
 
                     $subtotal = $unitPrice * $quantity;
+
 
                     /*
                     |--------------------------------------------------------------------------
@@ -179,17 +225,22 @@ class OrderController extends Controller
 
                     $total += $subtotal;
 
+
                     /*
                     |--------------------------------------------------------------------------
-                    | Préparer le order_item
+                    | Préparer la ligne de commande
                     |--------------------------------------------------------------------------
                     */
 
                     $orderItems[] = [
+
                         'product_id' => $product->id,
+
                         'quantity' => $quantity,
+
                         'price' => $unitPrice,
                     ];
+
 
                     /*
                     |--------------------------------------------------------------------------
@@ -197,7 +248,9 @@ class OrderController extends Controller
                     |--------------------------------------------------------------------------
                     */
 
-                    $product->quantity -= $quantity;
+                    $product->quantity =
+                        $product->quantity - $quantity;
+
 
                     /*
                     |--------------------------------------------------------------------------
@@ -212,8 +265,16 @@ class OrderController extends Controller
                         $product->is_available = false;
                     }
 
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Sauvegarder le nouveau stock
+                    |--------------------------------------------------------------------------
+                    */
+
                     $product->save();
                 }
+
 
                 /*
                 |--------------------------------------------------------------------------
@@ -222,8 +283,11 @@ class OrderController extends Controller
                 */
 
                 $order = Order::create([
+
+                    // Utilisateur connecté ou NULL pour un visiteur
                     'buyer_id' => $buyerId,
 
+                    // Informations de l'acheteur
                     'first_name' => $validated['first_name'],
 
                     'last_name' => $validated['last_name'],
@@ -232,28 +296,46 @@ class OrderController extends Controller
 
                     'email' => $validated['email'] ?? null,
 
+
+                    // Adresse
                     'address' => $validated['address'],
 
                     'city' => $validated['city'],
 
-                    'payment_method' => $validated['payment_method'],
+                    'neighborhood' =>
+                        $validated['neighborhood'] ?? null,
 
-                    'payment_phone' => $validated['payment_phone'],
+                    'note' =>
+                        $validated['note'] ?? null,
 
+
+                    // Paiement
+                    'payment_method' =>
+                        $validated['payment_method'],
+
+                    'payment_phone' =>
+                        $validated['payment_phone'],
+
+
+                    // Total calculé côté serveur
                     'total' => $total,
 
+
+                    // Statut initial
                     'status' => 'pending',
                 ]);
 
+
                 /*
                 |--------------------------------------------------------------------------
-                | 6. Créer les lignes de commande
+                | 6. Créer les order_items
                 |--------------------------------------------------------------------------
                 */
 
                 foreach ($orderItems as $item) {
 
                     OrderItem::create([
+
                         'order_id' => $order->id,
 
                         'product_id' => $item['product_id'],
@@ -264,12 +346,20 @@ class OrderController extends Controller
                     ]);
                 }
 
+
+                /*
+                |--------------------------------------------------------------------------
+                | Retourner la commande
+                |--------------------------------------------------------------------------
+                */
+
                 return $order;
             });
 
+
             /*
             |--------------------------------------------------------------------------
-            | 7. Recharger la commande avec ses produits
+            | 7. Charger les informations de la commande
             |--------------------------------------------------------------------------
             */
 
@@ -278,25 +368,30 @@ class OrderController extends Controller
                 'buyer',
             ]);
 
+
             /*
             |--------------------------------------------------------------------------
-            | 8. Réponse
+            | 8. Réponse succès
             |--------------------------------------------------------------------------
             */
 
             return response()->json([
+
                 'success' => true,
 
-                'message' => 'Commande créée avec succès.',
+                'message' =>
+                    'Votre commande a été reçue avec succès.',
 
                 'data' => $order,
+
             ], 201);
+
 
         } catch (\Exception $e) {
 
             /*
             |--------------------------------------------------------------------------
-            | En cas d'erreur
+            | 9. Erreur
             |--------------------------------------------------------------------------
             |
             | La transaction est automatiquement annulée.
@@ -304,55 +399,64 @@ class OrderController extends Controller
             */
 
             return response()->json([
+
                 'success' => false,
 
                 'message' => $e->getMessage(),
+
             ], 422);
         }
     }
 
 
     /**
-     * Commandes de l'utilisateur connecté
+     * Liste des commandes de l'acheteur connecté
      */
     public function myOrders(Request $request)
     {
         $orders = Order::with([
-            'items.product'
+            'items.product',
         ])
-        ->where('buyer_id', $request->user()->id)
-        ->latest()
-        ->paginate(10);
+            ->where('buyer_id', $request->user()->id)
+            ->latest()
+            ->paginate(10);
+
 
         return response()->json([
+
             'success' => true,
 
             'message' => 'Liste de vos commandes.',
 
             'data' => $orders,
+
         ]);
     }
 
 
     /**
      * Liste globale des commandes
-     * Réservée à l'administrateur
+     *
+     * Réservée à l'administrateur.
      */
     public function index()
     {
         $orders = Order::with([
             'items.product',
-            'buyer'
+            'buyer',
         ])
-        ->latest()
-        ->paginate(10);
+            ->latest()
+            ->paginate(10);
+
 
         return response()->json([
+
             'success' => true,
 
             'message' => 'Liste des commandes.',
 
             'data' => $orders,
+
         ]);
     }
 
@@ -364,23 +468,28 @@ class OrderController extends Controller
     {
         $producerId = $request->user()->id;
 
+
         $orders = Order::with([
-            'items.product'
+            'items.product',
         ])
-        ->whereHas('items.product', function ($query) use ($producerId) {
+            ->whereHas('items.product', function ($query) use ($producerId) {
 
-            $query->where('user_id', $producerId);
+                $query->where('user_id', $producerId);
 
-        })
-        ->latest()
-        ->paginate(10);
+            })
+            ->latest()
+            ->paginate(10);
+
 
         return response()->json([
+
             'success' => true,
 
-            'message' => 'Commandes concernant vos produits.',
+            'message' =>
+                'Commandes concernant vos produits.',
 
             'data' => $orders,
+
         ]);
     }
 }

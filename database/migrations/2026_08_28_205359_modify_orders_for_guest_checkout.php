@@ -1,4 +1,3 @@
-
 <?php
 
 use Illuminate\Database\Migrations\Migration;
@@ -7,73 +6,59 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    /**
+     * Modifier la table orders pour permettre
+     * les commandes sans authentification.
+     */
     public function up(): void
     {
-        Schema::create('orders', function (Blueprint $table) {
-            $table->id();
+        Schema::table('orders', function (Blueprint $table) {
 
-            /*
-            |---------------------------------------------
-            | Acheteur connecté
-            |---------------------------------------------
-            */
+            // L'ancien buyer_id devient facultatif
             $table->foreignId('buyer_id')
                 ->nullable()
-                ->constrained('users')
-                ->nullOnDelete();
+                ->change();
 
-            /*
-            |---------------------------------------------
-            | Informations de l'acheteur
-            |---------------------------------------------
-            */
-            $table->string('first_name');
-            $table->string('last_name');
-            $table->string('phone');
-            $table->string('email')->nullable();
+            // Informations de l'acheteur
+            $table->string('first_name')->after('buyer_id');
+            $table->string('last_name')->after('first_name');
+            $table->string('phone')->after('last_name');
+            $table->string('email')->nullable()->after('phone');
 
-            /*
-            |---------------------------------------------
-            | Livraison
-            |---------------------------------------------
-            */
-            $table->text('address');
-            $table->string('city');
-            $table->string('neighborhood')->nullable();
-            $table->text('note')->nullable();
+            // Adresse de livraison
+            $table->text('address')->after('email');
+            $table->string('city')->after('address');
+            $table->string('neighborhood')->nullable()->after('city');
 
-            /*
-            |---------------------------------------------
-            | Paiement
-            |---------------------------------------------
-            */
+            // Note éventuelle du client
+            $table->text('note')->nullable()->after('neighborhood');
+
+            // Moyen de paiement
             $table->enum('payment_method', [
                 'flooz',
                 'tmoney'
-            ]);
-
-            /*
-            |---------------------------------------------
-            | Commande
-            |---------------------------------------------
-            */
-            $table->decimal('total', 12, 2);
-
-            $table->enum('status', [
-                'pending',
-                'confirmed',
-                'shipped',
-                'delivered',
-                'cancelled'
-            ])->default('pending');
-
-            $table->timestamps();
+            ])->after('note');
         });
     }
 
+    /**
+     * Annuler les modifications.
+     */
     public function down(): void
     {
-        Schema::dropIfExists('orders');
+        Schema::table('orders', function (Blueprint $table) {
+
+            $table->dropColumn([
+                'first_name',
+                'last_name',
+                'phone',
+                'email',
+                'address',
+                'city',
+                'neighborhood',
+                'note',
+                'payment_method',
+            ]);
+        });
     }
 };
-

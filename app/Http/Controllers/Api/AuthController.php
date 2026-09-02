@@ -22,6 +22,9 @@ class AuthController extends Controller
             'email'      => 'required|email|unique:users,email',
             'password'   => 'required|string|min:8|confirmed',
             'role'       => 'required|in:producer,buyer,admin',
+
+            // Termes et conditions
+            'terms_accepted' => 'required|accepted',
         ]);
 
         $user = User::create([
@@ -31,6 +34,9 @@ class AuthController extends Controller
             'email'      => $validated['email'],
             'password'   => Hash::make($validated['password']),
             'role'       => $validated['role'],
+
+            // Enregistrer l'acceptation
+            'terms_accepted' => true,
         ]);
 
         $token = $user->createToken('auth_token')->plainTextToken;
@@ -62,7 +68,7 @@ class AuthController extends Controller
             ]);
         }
 
-        // Supprime les anciens tokens (optionnel)
+        // Supprime les anciens tokens
         $user->tokens()->delete();
 
         $token = $user->createToken('auth_token')->plainTextToken;

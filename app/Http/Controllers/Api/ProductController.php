@@ -171,4 +171,50 @@ public function myProducts(Request $request)
         'data' => $products,
     ]);
 }
+
+/**
+ * Liste de tous les produits pour l'administration
+ */
+public function adminIndex()
+{
+    $products = Product::with([
+        'farm',
+        'category',
+        'user'
+    ])
+    ->latest()
+    ->paginate(10);
+
+    return response()->json([
+        'success' => true,
+        'data' => $products
+    ]);
+}
+
+/**
+ * Supprimer un produit depuis l'administration
+ */
+/**
+ * Supprimer un produit depuis l'administration
+ */
+public function adminDestroy(Product $product)
+{
+    try {
+
+        $product->delete();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Produit supprimé avec succès.'
+        ]);
+
+    } catch (\Exception $e) {
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Impossible de supprimer ce produit.',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
 }
